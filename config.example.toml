@@ -1,0 +1,20 @@
+# password/salt 支持三种写法：
+# 1. 明文，例如 password = "your password"
+# 2. OpenList 保存的值，例如 password = "___Obfuscated___..."
+# 3. rclone obscure 后的值，例如 password = "..."
+password = "your password"
+salt = "your salt"
+
+# 对应 OpenList/rclone crypt 配置：filename_encoding
+# 常用值：base64、base32、base32768
+filename_encoding = "base64"
+
+# 文件夹是否加密(true/false)
+folder_name_encryption = true
+
+# 对应 OpenList/rclone crypt 配置：filename_encryption
+# 常用值：standard、off、obfuscate
+file_name_encryption = "standard"
+
+# 加密后缀，对应 driver.go 中 EncryptedSuffix / rclone suffix
+encrypted_suffix = ".bin"
