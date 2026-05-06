@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -69,11 +68,7 @@ func main() {
 		if outErr != nil {
 			fatalf("解析输出目录失败: %v", outErr)
 		}
-		if *reverse {
-			err = encodeDir(context.Background(), cipher, *dataPath, outDir)
-		} else {
-			err = decodeDir(context.Background(), cipher, *dataPath, outDir)
-		}
+		err = processDir(cipher, *dataPath, outDir, *reverse)
 	} else {
 		name, nameErr := convertFileName(cipher, filepath.Base(*dataPath), *reverse)
 		if nameErr != nil {
@@ -83,11 +78,7 @@ func main() {
 		if *outPath != "" {
 			outFile = filepath.Join(*outPath, name)
 		}
-		if *reverse {
-			err = encodeFile(context.Background(), cipher, *dataPath, outFile, info.Mode(), info.ModTime().UnixNano())
-		} else {
-			err = decodeFile(context.Background(), cipher, *dataPath, outFile, info.Mode(), info.ModTime().UnixNano())
-		}
+		err = processFile(cipher, *dataPath, outFile, info.Mode(), info.ModTime(), *reverse)
 	}
 	if err != nil {
 		if *reverse {
@@ -181,7 +172,7 @@ func resolveOutputDir(cipher *rcCrypt.Cipher, cfg Config, dataPath, outPath stri
 	return filepath.Join(parent, "d_"+base), nil
 }
 
-func decodeDir(ctx context.Context, cipher *rcCrypt.Cipher, inRoot, outRoot string) error {
+func processDir(cipher *rcCrypt.Cipher, inRoot, outRoot string, encrypt bool) error {
 	return filepath.WalkDir(inRoot, func(src string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -194,9 +185,13 @@ func decodeDir(ctx context.Context, cipher *rcCrypt.Cipher, inRoot, outRoot stri
 		if err != nil {
 			return err
 		}
-		dstRel, err := convertRelPath(cipher, rel, entry.IsDir(), false)
+		dstRel, err := convertRelPath(cipher, rel, entry.IsDir(), encrypt)
 		if err != nil {
-			return fmt.Errorf("解密路径 %q 失败: %w", rel, err)
+			operation := "解密"
+			if encrypt {
+				operation = "加密"
+			}
+			return fmt.Errorf("%s路径 %q 失败: %w", operation, rel, err)
 		}
 		dst := filepath.Join(outRoot, dstRel)
 
@@ -207,37 +202,7 @@ func decodeDir(ctx context.Context, cipher *rcCrypt.Cipher, inRoot, outRoot stri
 		if entry.IsDir() {
 			return os.MkdirAll(dst, info.Mode())
 		}
-		return decodeFile(ctx, cipher, src, dst, info.Mode(), info.ModTime().UnixNano())
-	})
-}
-
-func encodeDir(ctx context.Context, cipher *rcCrypt.Cipher, inRoot, outRoot string) error {
-	return filepath.WalkDir(inRoot, func(src string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if src == inRoot {
-			return os.MkdirAll(outRoot, 0o755)
-		}
-
-		rel, err := filepath.Rel(inRoot, src)
-		if err != nil {
-			return err
-		}
-		dstRel, err := convertRelPath(cipher, rel, entry.IsDir(), true)
-		if err != nil {
-			return fmt.Errorf("加密路径 %q 失败: %w", rel, err)
-		}
-		dst := filepath.Join(outRoot, dstRel)
-
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			return os.MkdirAll(dst, info.Mode())
-		}
-		return encodeFile(ctx, cipher, src, dst, info.Mode(), info.ModTime().UnixNano())
+		return processFile(cipher, src, dst, info.Mode(), info.ModTime(), encrypt)
 	})
 }
 
@@ -284,7 +249,7 @@ func convertDirName(cipher *rcCrypt.Cipher, name string, encrypt bool) (string, 
 	return cipher.DecryptDirName(name)
 }
 
-func decodeFile(ctx context.Context, cipher *rcCrypt.Cipher, src, dst string, mode os.FileMode, modTimeUnixNano int64) error {
+func processFile(cipher *rcCrypt.Cipher, src, dst string, mode os.FileMode, modTime time.Time, encrypt bool) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
@@ -295,35 +260,23 @@ func decodeFile(ctx context.Context, cipher *rcCrypt.Cipher, src, dst string, mo
 	}
 	defer in.Close()
 
-	reader, err := cipher.DecryptData(in)
+	var reader io.Reader
+	if encrypt {
+		reader, err = cipher.EncryptData(in)
+	} else {
+		reader, err = cipher.DecryptData(in)
+	}
 	if err != nil {
 		return err
 	}
-	defer reader.Close()
+	if closer, ok := reader.(io.Closer); ok {
+		defer closer.Close()
+	}
 
-	return writeStream(dst, mode, modTimeUnixNano, reader)
+	return writeStream(dst, mode, modTime, reader)
 }
 
-func encodeFile(ctx context.Context, cipher *rcCrypt.Cipher, src, dst string, mode os.FileMode, modTimeUnixNano int64) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
-	}
-
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	reader, err := cipher.EncryptData(in)
-	if err != nil {
-		return err
-	}
-
-	return writeStream(dst, mode, modTimeUnixNano, reader)
-}
-
-func writeStream(dst string, mode os.FileMode, modTimeUnixNano int64, reader io.Reader) error {
+func writeStream(dst string, mode os.FileMode, modTime time.Time, reader io.Reader) error {
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 	if err != nil {
 		return err
@@ -336,11 +289,7 @@ func writeStream(dst string, mode os.FileMode, modTimeUnixNano int64, reader io.
 	if closeErr != nil {
 		return closeErr
 	}
-	return os.Chtimes(dst, unixNanoToTime(modTimeUnixNano), unixNanoToTime(modTimeUnixNano))
-}
-
-func unixNanoToTime(n int64) (t time.Time) {
-	return time.Unix(0, n)
+	return os.Chtimes(dst, modTime, modTime)
 }
 
 func fatalf(format string, args ...any) {
