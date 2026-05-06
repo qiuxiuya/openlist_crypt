@@ -50,6 +50,7 @@ jobs:
         run: |
           mkdir -p dist
           go build -trimpath -ldflags='-s -w' -o "dist/crypt-${GOOS}-${GOARCH}${{ matrix.ext }}" .
+          cp config.example.toml dist/
 
       - name: Package
         shell: bash
@@ -57,9 +58,9 @@ jobs:
           cd dist
           asset="crypt-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            zip "${asset}.zip" "$asset"
+            zip "${asset}.zip" "$asset" config.example.toml
           else
-            tar -czf "${asset}.tar.gz" "$asset"
+            tar -czf "${asset}.tar.gz" "$asset" config.example.toml
           fi
 
       - name: Upload artifact
