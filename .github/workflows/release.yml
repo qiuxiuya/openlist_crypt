@@ -49,8 +49,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           mkdir -p dist
-          go build -trimpath -ldflags='-s -w' -o "dist/crypt-${GOOS}-${GOARCH}${{ matrix.ext }}" .
-          cp config.example.toml dist/
+          go build -trimpath -ldflags='-s -w' -o "dist/crypt-${GOOS}-${GOARCH}${{ matrix.ext }}" . && cp config.example.toml dist/
 
       - name: Package
         shell: bash

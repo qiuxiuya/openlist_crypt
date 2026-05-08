@@ -114,18 +114,9 @@ func loadConfig(path string) (Config, error) {
 }
 
 func newCipher(cfg Config) (*rcCrypt.Cipher, error) {
-	password, err := normalizeSecret(cfg.Password)
-	if err != nil {
-		return nil, fmt.Errorf("password: %w", err)
-	}
-	salt, err := normalizeSecret(cfg.Salt)
-	if err != nil {
-		return nil, fmt.Errorf("salt: %w", err)
-	}
-
 	m := configmap.Simple{
-		"password":                  password,
-		"password2":                 salt,
+		"password":                  normalizeSecret(cfg.Password),
+		"password2":                 normalizeSecret(cfg.Salt),
 		"filename_encryption":       cfg.FileNameEncryption,
 		"directory_name_encryption": fmt.Sprintf("%t", cfg.FolderNameEncryption),
 		"filename_encoding":         cfg.FileNameEncoding,
@@ -135,18 +126,18 @@ func newCipher(cfg Config) (*rcCrypt.Cipher, error) {
 	return rcCrypt.NewCipher(m)
 }
 
-func normalizeSecret(value string) (string, error) {
+func normalizeSecret(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return "", nil
+		return ""
 	}
 	if strings.HasPrefix(value, obfuscatedPrefix) {
-		return strings.TrimPrefix(value, obfuscatedPrefix), nil
+		return strings.TrimPrefix(value, obfuscatedPrefix)
 	}
-	if _, err := obscure.Reveal(value); err == nil {
-		return value, nil
+	if revealed, err := obscure.Reveal(value); err == nil {
+		return revealed
 	}
-	return obscure.Obscure(value)
+	return value
 }
 
 func resolveOutputDir(cipher *rcCrypt.Cipher, cfg Config, dataPath, outPath string, encrypt bool) (string, error) {
